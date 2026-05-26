@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>极简数据分析与可视化工作台</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    
+    <style>
+        /* 莫兰迪色系定制与阴影 */
+        :root {
+            --morandi-bg: #f4f5f6;
+            --morandi-primary: #8a9a86; /* 鼠尾草绿 */
+            --morandi-text: #4a5343;
+            --morandi-card: #ffffff;
+            --morandi-accent: #b8a18f; /* 燕麦色 */
+        }
+        body { background-color: var(--morandi-bg); color: var(--morandi-text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        .custom-card { background: var(--morandi-card); border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.03); border: 1px solid rgba(0,0,0,0.02); }
+    </style>
+</head>
+<body class="p-6 md:p-12 min-h-screen">
+
+    <div id="report-container" class="max-w-7xl mx-auto space-y-8">
+        <header class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 pb-4 border-b border-gray-200">
+            <div>
+                <h1 class="text-2xl font-bold tracking-tight text-gray-800">📊 极简数据分析工作台</h1>
+                <p class="text-sm text-gray-500 mt-1">支持多Sheet解析、实时搜索、多维图表联动及 R 代码生成</p>
+            </div>
+            <button onclick="exportToPDF()" class="px-5 py-2.5 bg-[#8a9a86] hover:bg-[#788874] text-white font-medium rounded-xl transition shadow-sm flex items-items-center gap-2 text-sm cursor-pointer">
+                📦 导出整页 PDF 报表
+            </button>
+        </header>
+
+        <section class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="custom-card p-6 flex flex-col justify-center items-center border-2 border-dashed border-gray-300 hover:border-[#8a9a86] transition relative group min-h-[160px]">
+                <input type="file" id="excel-file" accept=".xlsx, .xls" class="absolute inset-0 opacity-0 cursor-pointer" onchange="handleFile(this)">
+                <div class="text-center pointer-events-none">
+                    <span class="text-3xl block mb-2">📁</span>
+                    <span class="text-sm font-medium text-gray-600 block group-hover:text-[#8a9a86]">点击或拖拽上传 Excel 文件</span>
+                    <span class="text-xs text-gray-400 mt-1 block">支持多工作表自动解析</span>
+                </div>
+            </div>
+
+            <div class="custom-card p-6 space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">切换工作表 (Sheet)</label>
+                    <select id="sheet-select" onchange="switchSheet()" class="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#8a9a86]"></select>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">模糊搜索数据</label>
+                    <input type="text" id="search-input" oninput="filterData()" placeholder="输入任意关键词筛选..." class="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#8a9a86]">
+                </div>
+            </div>
+
+            <div class="custom-card p-6 space-y-4">
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">X 轴 (分类)</label>
+                        <select id="x-axis" onchange="updateChart()" class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-[#8a9a86]"></select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Y 轴 (数值)</label>
+                        <select id="y-axis" onchange="updateChart()" class="w-full bg-gray-50 border border-gray-200 rounded-xl px-3 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-[#8a9a86]"></select>
+                    </div>
+                </div>
+                <div class="flex gap-2 pt-1">
+                    <button onclick="toggleRCodeModal(true)" class="w-full py-2.5 bg-[#b8a18f] hover:bg-[#a6907e] text-white text-xs font-medium rounded-xl transition shadow-sm cursor-pointer">
+                        💻 查看 R 语言代码
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <main class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            <div class="custom-card p-6 lg:col-span-7 space-y-4">
+                <h3 class="text-sm font-bold text-gray-700 flex items-center justify-between">
+                    <span>📋 数据预览</span>
+                    <span id="row-count" class="text-xs font-normal text-gray-400">暂无数据</span>
+                </h3>
+                <div class="overflow-x-auto max-h-[500px] border border-gray-100 rounded-xl">
+                    <table class="w-full text-left text-xs text-gray-600 whitespace-nowrap">
+                        <thead id="table-head" class="bg-gray-50 sticky top-0 font-semibold text-gray-700 border-b border-gray-100"></thead>
+                        <tbody id="table-body" class="divide-y divide-gray-50">
+                            <tr><td class="p-8 text-center text-gray-400" colspan="100">请先在上方上传 Excel 文件</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="lg:col-span-5 space-y-6">
+                <div class="custom-card p-6 relative">
+                    <div class="flex justify-between items-center mb-4">
+                        <span class="text-xs font-bold text-gray-700">📊 趋势与对比 (柱状/折线)</span>
+                        <div class="flex gap-2">
+                            <button onclick="changeChartType('bar')" class="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200">柱状</button>
+                            <button onclick="changeChartType('line')" class="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200">折线</button>
+                            <button onclick="exportChart('mainChart')" class="text-xs px-2 py-1 rounded bg-[#8a9a86] text-white">导出</button>
+                        </div>
+                    </div>
+                    <div class="h-64"><canvas id="mainChart"></canvas></div>
+                </div>
+
+                <div class="custom-card p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <span class="text-xs font-bold text-gray-700">🍰 占比分布 (饼图)</span>
+                        <button onclick="exportChart('pieChart')" class="text-xs px-2 py-1 rounded bg-[#8a9a86] text-white">导出</button>
+                    </div>
+                    <div class="h-64 flex justify-center"><canvas id="pieChart"></canvas></div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div id="r-modal" class="fixed inset-0 bg-black/40 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-xl">
+            <div class="flex justify-between items-center pb-2 border-b border-gray-100">
+                <h3 class="text-base font-bold text-gray-800">🛠️ 对应 R 语言可视化代码</h3>
+                <button onclick="toggleRCodeModal(false)" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer">&times;</button>
+            </div>
+            <p class="text-xs text-gray-500">你可以直接复制以下主流 <code>ggplot2</code> 代码至 RStudio 中运行，以完美复现当前图表逻辑：</p>
+            <pre class="bg-gray-50 p-4 rounded-xl text-xs font-mono text-gray-700 overflow-x-auto border border-gray-100 max-h-80" id="r-code-block"></pre>
+            <div class="flex justify-end gap-2">
+                <button onclick="copyRCode()" class="px-4 py-2 bg-[#8a9a86] text-white text-xs rounded-xl hover:bg-[#788874]">复制 R 代码</button>
+                <button onclick="toggleRCodeModal(false)" class="px-4 py-2 bg-gray-100 text-gray-600 text-xs rounded-xl hover:bg-gray-200">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let workbookData = {}; // 存储所有工作表的数据 {sheetName: [jsonData]}
+        let currentSheetName = "";
+        let currentData = [];
+        let filteredData = [];
+        let mainChart = null;
+        let pieChart = null;
+        let currentChartType = 'bar';
+
+        // 1. 处理文件上传
+        function handleFile(input) {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, {type: 'array'});
+                
+                workbookData = {};
+                workbook.SheetNames.forEach(sheetName => {
+                    const worksheet = workbook.Sheets[sheetName];
+                    // 转换为JSON，包含空行处理
+                    workbookData[sheetName] = XLSX.utils.sheet_to_json(worksheet, {defval: ""});
+                });
+
+                // 更新下拉菜单
+                const sheetSelect = document.getElementById('sheet-select');
+                sheetSelect.innerHTML = "";
+                workbook.SheetNames.forEach(name => {
+                    if(workbookData[name].length > 0) { // 仅显示非空Sheet
+                        sheetSelect.options[sheetSelect.options.length] = new Option(name, name);
+                    }
+                });
+
+                if (sheetSelect.options.length > 0) {
+                    switchSheet(sheetSelect.options[0].value);
+                } else {
+                    alert("未在Excel中检测到有效数据行。");
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        // 2. 切换工作表
+        function switchSheet(targetName) {
+            currentSheetName = targetName || document.getElementById('sheet-select').value;
+            currentData = workbookData[currentSheetName] || [];
+            filteredData = [...currentData];
+            document.getElementById('search-input').value = ""; // 重置搜索框
+
+            if (currentData.length > 0) {
+                populateAxisSelectors();
+                renderTable();
+                initOrUpdateCharts();
+            }
+        }
+
+        // 3. 配置维度的下拉菜单
+        function populateAxisSelectors() {
+            const xSelect = document.getElementById('x-axis');
+            const ySelect = document.getElementById('y-axis');
+            xSelect.innerHTML = ""; ySelect.innerHTML = "";
+
+            if(currentData.length === 0) return;
+            const columns = Object.keys(currentData[0]);
+
+            columns.forEach(col => {
+                xSelect.options[xSelect.options.length] = new Option(col, col);
+                ySelect.options[ySelect.options.length] = new Option(col, col);
+            });
+
+            // 智能预选：通常第一列是分类(X)，第二列如果是数字则选为Y
+            if(columns.length > 1) {
+                ySelect.selectedIndex = 1;
+            }
+        }
+
+        // 4. 渲染表格数据
+        function renderTable() {
+            const head = document.getElementById('table-head');
+            const body = document.getElementById('table-body');
+            head.innerHTML = ""; body.innerHTML = "";
+
+            document.getElementById('row-count').innerText = `共显示 ${filteredData.length} 行数据`;
+            if (filteredData.length === 0) {
+                body.innerHTML = `<tr><td class="p-8 text-center text-gray-400" colspan="100">无匹配数据</td></tr>`;
+                return;
+            }
+
+            const columns = Object.keys(currentData[0]);
+            
+            // 表头
+            let headRow = "<tr>";
+            columns.forEach(col => headRow += `<th class="px-4 py-3 font-semibold">${col}</th>`);
+            headRow += "</tr>";
+            head.innerHTML = headRow;
+
+            // 表体
+            filteredData.forEach(row => {
+                let bodyRow = "<tr class='hover:bg-gray-50/80 transition'>";
+                columns.forEach(col => {
+                    bodyRow += `<td class="px-4 py-2.5 border-b border-gray-100 max-w-[200px] truncate" title="${row[col]}">${row[col]}</td>`;
+                });
+                bodyRow += "</tr>";
+                body.insertAdjacentHTML('beforeend', bodyRow);
+            });
+        }
+
+        // 5. 模糊搜索过滤
+        function filterData() {
+            const query = document.getElementById('search-input').value.toLowerCase().trim();
+            if (!query) {
+                filteredData = [...currentData];
+            } else {
+                filteredData = currentData.filter(row => {
+                    return Object.values(row).some(val => String(val).toLowerCase().includes(query));
+                });
+            }
+            renderTable();
+            initOrUpdateCharts(); // 联动更新图表
+        }
+
+        // 6. 核心图表逻辑生成
+        function initOrUpdateCharts() {
+            const xKey = document.getElementById('x-axis').value;
+            const yKey = document.getElementById('y-axis').value;
+
+            if(!xKey || !yKey || filteredData.length === 0) return;
+
+            // 限制前30条防止图表由于数据过多崩溃溢出
+            const chartDataLimit = filteredData.slice(0, 30);
+            const labels = chartDataLimit.map(r => String(r[xKey]));
+            const values = chartDataLimit.map(r => parseFloat(r[yKey]) || 0);
+
+            // 莫兰迪色系盘
+            const colors = ['#8a9a86', '#b8a18f', '#95a7b5', '#c2b39a', '#a39391', '#adbfa8', '#dfd3c3', '#b4c9c7'];
+
+            // 销毁旧图表实例
+            if (mainChart) mainChart.destroy();
+            if (pieChart) pieChart.destroy();
+
+            // 生成主图表 (柱状 / 折线)
+            const ctxMain = document.getElementById('mainChart').getContext('2d');
+            mainChart = new Chart(ctxMain, {
+                type: currentChartType,
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: `${yKey} (按 ${xKey})`,
+                        data: values,
+                        backgroundColor: currentChartType === 'bar' ? colors.map(c => c + 'cc') : '#8a9a86',
+                        borderColor: '#8a9a86',
+                        borderWidth: 1.5,
+                        fill: currentChartType === 'line' ? false : true,
+                        tension: 0.1
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+            });
+
+            // 生成饼图
+            const ctxPie = document.getElementById('pieChart').getContext('2d');
+            pieChart = new Chart(ctxPie, {
+                type: 'pie',
+                data: {
+                    labels: labels.slice(0, 10), // 饼图强制限制前10类避免拥挤
+                    datasets: [{
+                        data: values.slice(0, 10),
+                        backgroundColor: colors
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } } } }
+            });
+
+            generateRCode(xKey, yKey);
+        }
+
+        function updateChart() { initOrUpdateCharts(); }
+        function changeChartType(type) { currentChartType = type; initOrUpdateCharts(); }
+
+        // 7. 单张图表导出 PNG
+        function exportChart(canvasId) {
+            const canvas = document.getElementById(canvasId);
+            const imageURI = canvas.toDataURL("image/png");
+            const timestamp = new Date().getTime();
+            const link = document.createElement('a');
+            link.download = `${canvasId}_${timestamp}.png`;
+            link.href = imageURI;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // 8. 页面整体导出为 PDF 报表
+        function exportToPDF() {
+            const element = document.getElementById('report-container');
+            const opt = {
+                margin:       [10, 10, 10, 10],
+                filename:     `数据分析综合报表_${new Date().toLocaleDateString()}.pdf`,
+                image:        { type: 'jpeg', quality: 0.98 },
+                html2canvas:  { scale: 2, useCORS: true },
+                jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape' } // 横向a4更适合看宽表和并排图
+            };
+            html2pdf().set(opt).from(element).save();
+        }
+
+        // 9. 生成 R 语言可视化代码
+        function generateRCode(x, y) {
+            const code = `# 💡 请确保您已安装并加载了必备组件：install.packages("ggplot2")
+library(ggplot2)
+
+# 1. 加载或构造导入您的数据集 (替换为本地路径)
+# data <- readxl::read_excel("您的文件.xlsx", sheet = "${currentSheetName}")
+# 这里为您模拟当前过滤状态下的前30行快速测试数据：
+data <- data.frame(
+  X_Dim = c(${mainChart.data.labels.map(l => `"${l}"`).join(', ')}),
+  Y_Val = c(${mainChart.data.datasets[0].data.join(', ')})
+)
+
+# 2. 莫兰迪低饱和度配色定义
+morandi_colors <- c('#8a9a86', '#b8a18f', '#95a7b5', '#c2b39a', '#a39391')
+
+# 3. 动态生成对应的映射图表
+${currentChartType === 'bar' ? 
+`ggplot(data, aes(x = reorder(X_Dim, -Y_Val), y = Y_Val, fill = X_Dim)) +
+  geom_bar(stat = "identity", width = 0.7, show.legend = FALSE) +
+  scale_fill_manual(values = rep(morandi_colors, length.out = nrow(data))) +` : 
+`ggplot(data, aes(x = X_Dim, y = Y_Val, group = 1)) +
+  geom_line(color = "#8a9a86", size = 1.2) +
+  geom_point(color = "#b8a18f", size = 3) +`}
+  labs(
+    title = "${y} 随 ${x} 的分布趋势分析",
+    subtitle = "数据源自 Sheet: ${currentSheetName}",
+    x = "${x}",
+    y = "${y}"
+  ) +
+  theme_minimal(base_family = "SimSun") + # 适配中文显示
+  theme(
+    plot.title = element_text(face = "bold", size = 14, color = "#4a5343"),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    panel.grid.minor = element_blank()
+  )
+
+# 4. 高清保存脚本
+# ggsave("r_morandi_chart.png", width = 8, height = 6, dpi = 300)
+`;
+            document.getElementById('r-code-block').innerText = code;
+        }
+
+        // 10. 弹窗控制与复制
+        function toggleRCodeModal(show) {
+            const modal = document.getElementById('r-modal');
+            if(show) modal.classList.remove('hidden');
+            else modal.classList.add('hidden');
+        }
+
+        function copyRCode() {
+            const text = document.getElementById('r-code-block').innerText;
+            navigator.clipboard.writeText(text).then(() => {
+                alert("R 语言代码已成功复制到剪贴板！");
+            }).catch(() => {
+                alert("复制失败，请手动划选代码复制。");
+            });
+        }
+    </script>
+</body>
+</html>
